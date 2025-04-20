@@ -1,3 +1,8 @@
+import torch
+import torch.nn as nn
+
+torch.manual_seed(42)
+
 class BANDNN(nn.Module):
     def __init__(self, bonds_input_dim, angles_input_dim, nonbonds_input_dim, dihedral_input_dim):
         super().__init__()
