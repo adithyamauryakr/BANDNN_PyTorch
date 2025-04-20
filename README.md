@@ -16,6 +16,8 @@ model.to(device)
 model.eval()
 ```
 
+DATASET source: https://drive.google.com/drive/folders/1YiR_p7yZ5POTznWfYADCPmi3UEh0LhNv?usp=drive_link
+
 Training pipeline: BANDNN_mirror.ipynb
 
 Optuna Hyperparameter Tuning: hpt-BANDNN.ipynb (sample code, not executed)
