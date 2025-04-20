@@ -2,6 +2,7 @@
 REF: J. Comp. Chem. 2020, 41, 790-799
 
 Model architecture: bandnn_model.py
+Model weights: BANDNN-weights-200425.pth
 ```
 from bandnn_model import BANDNN
 import torch
@@ -13,7 +14,6 @@ model.load_state_dict(torch.load("BANDNN-weights-200425.pth", map_location=devic
 model.to(device)
 model.eval()
 ```
-Model weights: BANDNN-weights-200425.pth
 
 Training pipeline: BANDNN_mirror.ipynb
 
