@@ -2,6 +2,7 @@
 REF: J. Comp. Chem. 2020, 41, 790-799
 
 Model architecture: bandnn_model.py
+
 Model weights: BANDNN-weights-200425.pth
 ```
 from bandnn_model import BANDNN
