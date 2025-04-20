@@ -2,7 +2,8 @@
 REF: J. Comp. Chem. 2020, 41, 790-799
 
 Model architecture: bandnn_model.py
-``` from bandnn_model import BANDNN
+```
+from bandnn_model import BANDNN
 import torch
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
