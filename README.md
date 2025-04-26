@@ -5,13 +5,13 @@ Model architecture: bandnn_model.py
 
 Model weights: BANDNN-weights-200425.pth
 ```
-from bandnn_model import BANDNN
+from models.bandnn_model import BANDNN
 import torch
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 model = BANDNN(..)
-model.load_state_dict(torch.load("BANDNN-weights-200425.pth", map_location=device))
+model.load_state_dict(torch.load("BANDNN-weights-260425.pth", map_location=device))
 model.to(device)
 model.eval()
 ```
