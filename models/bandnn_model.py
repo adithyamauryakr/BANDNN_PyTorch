@@ -51,3 +51,7 @@ class BANDNN(nn.Module):
 
         total_energy = bonds_energy + angles_energy + nonbonds_energy + dihedrals_energy
         return total_energy
+
+
+if __name__ == '__main__':
+    
