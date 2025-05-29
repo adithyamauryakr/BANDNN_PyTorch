@@ -44,11 +44,10 @@ class CustomDataset(Dataset):
 
   def __getitem__(self, index):
     return self.features[index], self.targets[index]
-  
-  def collate_Fn(batch):
-    feature_batch, target_batch = zip(*batch)
-    return list(feature_batch), torch.tensor(target_batch, dtype=torch.float32)
-  
+
+def collate_Fn(batch):
+feature_batch, target_batch = zip(*batch)
+return list(feature_batch), torch.tensor(target_batch, dtype=torch.float32)
   
 train_dataset = CustomDataset(X_train, y_train)
 test_dataset = CustomDataset(X_test, y_test)
