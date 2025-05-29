@@ -10,6 +10,7 @@ import lib.pyanitools as pya
 import os
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print('using', device)
 
 import h5py
 PATH = 'molecules.h5'
