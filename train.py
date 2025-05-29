@@ -12,7 +12,7 @@ import os
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 import h5py
-PATH = '/content/drive/MyDrive/bandnn_datasets/molecules.h5'
+PATH = 'molecules.h5'
 features_list = []
 with h5py.File(PATH, 'r') as h5f:
     for mol_key in h5f.keys():
@@ -25,7 +25,7 @@ with h5py.File(PATH, 'r') as h5f:
 
 print(len(features_list))
 
-y = pd.read_csv('/content/drive/MyDrive/bandnn_datasets/energy_list.csv').values
+y = pd.read_csv('energy_list.csv').values
 
 X_train, X_test, y_train, y_test = train_test_split(
     features_list, y, test_size=0.2, random_state=42
