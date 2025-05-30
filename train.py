@@ -1,4 +1,4 @@
-
+from tqdm import tqdm
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import torch
@@ -77,9 +77,9 @@ class BANDNN(nn.Module):
         self.angles_model = nn.Sequential(
             nn.Linear(angles_input_dim, 128),
             nn.ReLU(),
-            nn.Linear(128, 350),
+            nn.Linear(128, 256),
             nn.ReLU(),
-            nn.Linear(350, 128),
+            nn.Linear(256, 128),
             nn.ReLU(),
             nn.Linear(128, 1)
         )
@@ -97,9 +97,9 @@ class BANDNN(nn.Module):
         self.dihedrals_model = nn.Sequential(
             nn.Linear(dihedral_input_dim, 128),
             nn.ReLU(),
-            nn.Linear(128, 512),
+            nn.Linear(128, 256),
             nn.ReLU(),
-            nn.Linear(512, 128),
+            nn.Linear(256, 128),
             nn.ReLU(),
             nn.Linear(128, 1)
         )
@@ -131,43 +131,49 @@ optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 check_point_epochs = [10, 20, 30, 40, 50, 60]
 
 for epoch in range(0, 60):
-  print(f'Epoch {epoch + 1}')
-  total_epoch_loss = 0
-  num_samples = 0
+    print(f'Epoch {epoch + 1}')
+    total_epoch_loss = 0
+    num_samples = 0
+    tq_loader = tqdm(train_loader)
 
-  for batch in train_loader:
+    for batch in tq_loader:
 
-    for feature_dict, target in zip(*batch):
+        for feature_dict, target in zip(*batch):
 
-      bond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['bonds']]).to(device)
-      angle_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['angles']]).to(device)
-      nonbond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['nonbonds']]).to(device)
-      dihedral_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['dihedrals']]).to(device)
-      energy_feat = torch.tensor([target], dtype=torch.float32).to(device)
+            bond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['bonds']]).to(device)
+            angle_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['angles']]).to(device)
+            nonbond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['nonbonds']]).to(device)
+            dihedral_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['dihedrals']]).to(device)
+            energy_feat = torch.tensor([target], dtype=torch.float32).to(device)
 
-      optimizer.zero_grad()
+            optimizer.zero_grad()
 
-      outputs = model(bond_feat, angle_feat, nonbond_feat, dihedral_feat)
+            outputs = model(bond_feat, angle_feat, nonbond_feat, dihedral_feat)
 
-      loss = criterion(outputs, energy_feat)
-      loss.backward()
+            loss = criterion(outputs, energy_feat)
+            loss.backward()
 
-      optimizer.step()
+            optimizer.step()
 
-      num_samples+=1
-      total_epoch_loss += loss.item()
+            num_samples+=1
+            total_epoch_loss += loss.item()
 
 
-  avg_loss = total_epoch_loss / num_samples
-  print(f'Average epoch Loss: {avg_loss:.4f}')
-  if epoch in check_point_epochs:
-    torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': avg_loss,
+        avg_loss = total_epoch_loss / num_samples
 
-                }, f'BANDNN-chekpoint_epoch_{epoch}.pth')
+        tq_loader.set_description(
+            "Epoch: " + str(epoch + 1) + "  Training loss: " + str(avg_loss))
+        print(f'Average epoch Loss: {avg_loss:.4f}')
+        
+        if epoch in check_point_epochs:
+
+            torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': avg_loss,
+
+                    }, f'BANDNN-chekpoint_epoch_{epoch}.pth')
 
 
 
