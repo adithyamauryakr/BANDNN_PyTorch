@@ -161,10 +161,6 @@ for epoch in range(0, 60):
 
         avg_loss = total_epoch_loss / num_samples
 
-        tq_loader.set_description(
-            "Epoch: " + str(epoch + 1) + "  Training loss: " + str(avg_loss))
-        print(f'Average epoch Loss: {avg_loss:.4f}')
-        
         if epoch in check_point_epochs:
 
             torch.save({
@@ -174,6 +170,10 @@ for epoch in range(0, 60):
                     'loss': avg_loss,
 
                     }, f'BANDNN-chekpoint_epoch_{epoch}.pth')
+    tq_loader.set_description(
+        "Epoch: " + str(epoch + 1) + "  Training loss: " + str(avg_loss))
+    print(f'Average epoch Loss: {avg_loss:.4f}')
+        
 
 
 
