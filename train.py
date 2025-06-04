@@ -109,9 +109,9 @@ class BANDNN(nn.Module):
         self.angles_model = nn.Sequential(
             nn.Linear(angles_input_dim, 128),
             nn.ReLU(),
-            nn.Linear(128, 256),
+            nn.Linear(128, 350),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(350, 128),
             nn.ReLU(),
             nn.Linear(128, 1)
         )
@@ -129,9 +129,9 @@ class BANDNN(nn.Module):
         self.dihedrals_model = nn.Sequential(
             nn.Linear(dihedral_input_dim, 128),
             nn.ReLU(),
-            nn.Linear(128, 256),
+            nn.Linear(128, 512),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(512, 128),
             nn.ReLU(),
             nn.Linear(128, 1)
         )
