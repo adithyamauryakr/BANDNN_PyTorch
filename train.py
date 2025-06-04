@@ -8,6 +8,8 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 import lib.pyanitools as pya
 import os
+import copy 
+
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print('using', device)
@@ -59,6 +61,36 @@ test_loader = DataLoader(test_dataset, batch_size=32, collate_fn=collate_Fn, shu
 BONDS_DIM, ANGLES_DIM, NONBONDS_DIM, DIHEDRALS_DIM = 17, 27, 17, 38
 
 torch.manual_seed(42)
+
+
+class EarlyStopping:
+    def __init__(self, patience=5, min_delta=0, restore_best_weights=True):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.restore_best_weights = restore_best_weights
+        self.best_model = None
+        self.best_loss = None
+        self.counter = 0
+        self.status = ""
+
+    def __call__(self, model, val_loss):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+            self.best_model = copy.deepcopy(model.state_dict())
+        elif self.best_loss - val_loss >= self.min_delta:
+            self.best_model = copy.deepcopy(model.state_dict())
+            self.best_loss = val_loss
+            self.counter = 0
+            self.status = f"Improvement found, counter reset to {self.counter}"
+        else:
+            self.counter += 1
+            self.status = f"No improvement in the last {self.counter} epochs"
+            if self.counter >= self.patience:
+                self.status = f"Early stopping triggered after {self.counter} epochs."
+                if self.restore_best_weights:
+                    model.load_state_dict(self.best_model)
+                return True
+        return False
 
 class BANDNN(nn.Module):
 
@@ -129,60 +161,9 @@ criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
 check_point_epochs = [10, 20, 30, 40, 50, 60]
+done = False
+es = EarlyStopping()
 
-for epoch in range(0, 60):
-    print(f'Epoch {epoch + 1}')
-    total_epoch_loss = 0
-    num_samples = 0
-    tq_loader = tqdm(train_loader)
-
-    for batch in tq_loader:
-
-        for feature_dict, target in zip(*batch):
-
-            bond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['bonds']]).to(device)
-            angle_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['angles']]).to(device)
-            nonbond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['nonbonds']]).to(device)
-            dihedral_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['dihedrals']]).to(device)
-            energy_feat = torch.tensor([target], dtype=torch.float32).to(device)
-
-            optimizer.zero_grad()
-
-            outputs = model(bond_feat, angle_feat, nonbond_feat, dihedral_feat)
-
-            loss = criterion(outputs, energy_feat)
-            loss.backward()
-
-            optimizer.step()
-
-            num_samples+=1
-            total_epoch_loss += loss.item()
-
-
-        avg_loss = total_epoch_loss / num_samples
-
-        if epoch in check_point_epochs:
-
-            torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'loss': avg_loss,
-
-                    }, f'BANDNN-chekpoint_epoch_{epoch}.pth')
-    tq_loader.set_description(
-        "Epoch: " + str(epoch + 1) + "  Training loss: " + str(avg_loss))
-    print(f'Average epoch Loss: {avg_loss:.4f}')
-        
-
-
-
-torch.save(model.state_dict(), 'BANDNN-weights-260425-1.pth')
-
-
-model.eval()
-
-from sklearn.metrics import r2_score
 
 def evaluate_model(model, test_loader, device='cuda'):
     model.eval()  # Set model to eval mode
@@ -223,6 +204,78 @@ def evaluate_model(model, test_loader, device='cuda'):
     print(f"Evaluation MSE Loss: {avg_loss:.4f}")
     print(f"Evaluation R2 Score: {r2_score(targets_list, predictions):.4f}")
     return predictions, targets_list, avg_loss
+
+
+while epoch < 1000 and not done:
+    epoch += 1
+    steps = list(enumerate(train_loader))
+    pbar = tqdm(steps)
+# for epoch in range(0, 60):
+#     print(f'Epoch {epoch + 1}')
+#     total_epoch_loss = 0
+#     num_samples = 0
+#     tq_loader = tqdm(train_loader)
+
+    for i, (batch) in pbar:
+
+        for feature_dict, target in zip(*batch):
+
+            bond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['bonds']]).to(device)
+            angle_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['angles']]).to(device)
+            nonbond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['nonbonds']]).to(device)
+            dihedral_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['dihedrals']]).to(device)
+            energy_feat = torch.tensor([target], dtype=torch.float32).to(device)
+
+            optimizer.zero_grad()
+
+            outputs = model(bond_feat, angle_feat, nonbond_feat, dihedral_feat)
+
+            loss = criterion(outputs, energy_feat)
+            loss.backward()
+
+            optimizer.step()
+            loss, current = loss.item(), (i + 1) * len(batch)
+            if i == len(steps) - 1:
+                predictions, targets_list, avg_loss = evaluate_model(model=model, test_loader=test_loader)
+                model.eval()
+                # pred = model(test_loader).flatten()
+                # vloss = criterion(pred, y_test)
+                if es(model, avg_loss):
+                    done = True
+                pbar.set_description(
+                    f"Epoch: {epoch}, tloss: {loss}, vloss: {avg_loss:>7f}, EStop:[{es.status}]"
+                )
+            else:
+                pbar.set_description(f"Epoch: {epoch}, tloss {loss:}")
+
+            num_samples+=1
+            total_epoch_loss += loss.item()
+
+
+        avg_loss = total_epoch_loss / num_samples
+
+        if epoch in check_point_epochs:
+
+            torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': avg_loss,
+
+                    }, f'BANDNN-chekpoint_epoch_{epoch}.pth')
+    tq_loader.set_description(
+        "Epoch: " + str(epoch + 1) + "  Training loss: " + str(avg_loss))
+    print(f'Average epoch Loss: {avg_loss:.4f}')
+        
+
+
+
+torch.save(model.state_dict(), 'BANDNN-weights-260425-1.pth')
+
+
+model.eval()
+
+from sklearn.metrics import r2_score
 
 model.to(device)
 preds, true_vals, test_loss = evaluate_model(model, test_loader, device)
