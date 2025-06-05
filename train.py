@@ -160,7 +160,7 @@ criterion = nn.MSELoss()
 # optimizer
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-check_point_epochs = [10, 20, 30, 40, 50, 60]
+check_point_epochs = [i*100 for i in range(1, 20)]
 done = False
 es = EarlyStopping()
 
@@ -205,21 +205,20 @@ def evaluate_model(model, test_loader, device='cuda'):
     print(f"Evaluation R2 Score: {r2_score(targets_list, predictions):.4f}")
     return predictions, targets_list, avg_loss
 
+done = False
+epoch = 0
 
 while epoch < 1000 and not done:
     epoch += 1
+    total_epoch_loss = 0.0
+    num_samples = 0
     steps = list(enumerate(train_loader))
     pbar = tqdm(steps)
-# for epoch in range(0, 60):
-#     print(f'Epoch {epoch + 1}')
-#     total_epoch_loss = 0
-#     num_samples = 0
-#     tq_loader = tqdm(train_loader)
 
-    for i, (batch) in pbar:
+    for i, batch in pbar:
+        feature_dict_list, target_list = batch
 
-        for feature_dict, target in zip(*batch):
-
+        for feature_dict, target in zip(feature_dict_list, target_list):
             bond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['bonds']]).to(device)
             angle_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['angles']]).to(device)
             nonbond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['nonbonds']]).to(device)
@@ -227,50 +226,41 @@ while epoch < 1000 and not done:
             energy_feat = torch.tensor([target], dtype=torch.float32).to(device)
 
             optimizer.zero_grad()
-
             outputs = model(bond_feat, angle_feat, nonbond_feat, dihedral_feat)
-
             loss = criterion(outputs, energy_feat)
             loss.backward()
-
             optimizer.step()
-            loss, current = loss.item(), (i + 1) * len(batch)
-            if i == len(steps) - 1:
-                predictions, targets_list, avg_loss = evaluate_model(model=model, test_loader=test_loader)
-                model.eval()
-                # pred = model(test_loader).flatten()
-                # vloss = criterion(pred, y_test)
-                if es(model, avg_loss):
-                    done = True
-                pbar.set_description(
-                    f"Epoch: {epoch}, tloss: {loss}, vloss: {avg_loss:>7f}, EStop:[{es.status}]"
-                )
-            else:
-                pbar.set_description(f"Epoch: {epoch}, tloss {loss:}")
 
-            num_samples+=1
-            total_epoch_loss += loss.item()
+            loss_val = loss.item()
+            total_epoch_loss += loss_val
+            num_samples += 1
 
+            pbar.set_description(f"Epoch: {epoch}, Batch Loss: {loss_val:.4f}")
 
-        avg_loss = total_epoch_loss / num_samples
+    avg_train_loss = total_epoch_loss / num_samples
 
-        if epoch in check_point_epochs:
+    # Validation after each epoch
+    model.eval()
+    predictions, targets_list, avg_val_loss = evaluate_model(model=model, test_loader=test_loader)
 
-            torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'loss': avg_loss,
+    if es(model, avg_val_loss):
+        done = True
 
-                    }, f'BANDNN-chekpoint_epoch_{epoch}.pth')
-    tq_loader.set_description(
-        "Epoch: " + str(epoch + 1) + "  Training loss: " + str(avg_loss))
-    print(f'Average epoch Loss: {avg_loss:.4f}')
-        
+    pbar.set_description(
+        f"Epoch: {epoch}, Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, EStop: [{es.status}]"
+    )
 
+    # Save checkpoint if needed
+    if epoch in check_point_epochs:
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': avg_train_loss,
+        }, f'/home2/prathit.chatterjee/Adithya/BANDNN-checkpoint_epoch_{epoch}.pth')
+  
 
-
-torch.save(model.state_dict(), 'BANDNN-weights-260425-1.pth')
+torch.save(model.state_dict(), '/home2/prathit.chatterjee/Adithya/BANDNN-weights-260425-1.pth')
 
 
 model.eval()
@@ -286,5 +276,5 @@ plt.scatter(true_vals, preds)
 plt.xlabel("DFT Energy")
 plt.ylabel("Predicted Energy")
 plt.title("BANDNN Predictions vs Ground Truth")
-plt.savefig('parityplot.png')
+plt.savefig('/home2/prathit.chatterjee/Adithya/parityplot.png')
 plt.show()
