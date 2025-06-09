@@ -221,7 +221,7 @@ model     = BANDNN(BONDS_DIM, ANGLES_DIM, NONBONDS_DIM, DIHEDRALS_DIM).to(device
 criterion = torch.nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
-early_stop = EarlyStopping(patience=7, min_delta=0.0001)
+early_stop = EarlyStopping(patience=30, min_delta=0.0001)
 
 epochs = 1000
 learning_rate = 0.01
@@ -313,7 +313,7 @@ preds, true_vals, test_loss = evaluate_model(model, test_loader, device)
 # Metrics
 r2 = r2_score(true_vals, preds)
 mae = mean_absolute_error(true_vals, preds)
-rmse = mean_squared_error(true_vals, preds, squared=False)
+rmse = mean_squared_error(true_vals, preds)
 
 print(f"Test Loss: {test_loss:.4f} | R²: {r2:.4f} | MAE: {mae:.4f} | RMSE: {rmse:.4f}")
 
