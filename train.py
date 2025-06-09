@@ -31,12 +31,6 @@ print(len(features_list))
 
 y = pd.read_csv('energy_list.csv').values
 
-X_train, X_test, y_train, y_test = train_test_split(
-    features_list, y, test_size=0.2, random_state=42
-)
-
-
-
 class CustomDataset(Dataset):
 
   def __init__(self, features, targets):
@@ -48,103 +42,144 @@ class CustomDataset(Dataset):
 
   def __getitem__(self, index):
     return self.features[index], self.targets[index]
+  
 
 def collate_Fn(batch):
     feature_batch, target_batch = zip(*batch)
     return list(feature_batch), torch.tensor(target_batch, dtype=torch.float32)
-    
-train_dataset = CustomDataset(X_train, y_train)
-test_dataset = CustomDataset(X_test, y_test)
 
-train_loader = DataLoader(train_dataset, batch_size=32,collate_fn=collate_Fn, shuffle=True, pin_memory=True)
-test_loader = DataLoader(test_dataset, batch_size=32, collate_fn=collate_Fn, shuffle=False, pin_memory=True)
+
+from torch.utils.data import DataLoader, random_split, Dataset
+
+full_dataset = CustomDataset(features_list, y)
+
+# Split sizes
+total_len = len(full_dataset)
+train_len = int(0.8 * total_len)
+val_len   = int(0.1 * total_len)
+test_len  = total_len - train_len - val_len
+
+# Random split
+train_dataset, val_dataset, test_dataset = random_split(
+    full_dataset, [train_len, val_len, test_len],
+    generator=torch.Generator().manual_seed(42)  # for reproducibility
+)
+
+
+# Dataloaders
+batch_size = 32
+
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False)
+test_loader  = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
 
 BONDS_DIM, ANGLES_DIM, NONBONDS_DIM, DIHEDRALS_DIM = 17, 27, 17, 38
 
-torch.manual_seed(42)
+import torch
+import torch.nn as nn
+from typing import List                # just for clearer type hints
 
+import copy
+from tqdm import tqdm
+import torch
 
+# --- Early‑stopping utility (your class, unchanged) ---------------------------
 class EarlyStopping:
-    def __init__(self, patience=5, min_delta=0, restore_best_weights=True):
-        self.patience = patience
-        self.min_delta = min_delta
-        self.restore_best_weights = restore_best_weights
-        self.best_model = None
-        self.best_loss = None
-        self.counter = 0
-        self.status = ""
+    def __init__(self, patience=5, min_delta=0.0, restore_best_weights=True):
+        self.patience   = patience
+        self.min_delta  = min_delta
+        self.restore    = restore_best_weights
 
-    def __call__(self, model, val_loss):
-        if self.best_loss is None:
-            self.best_loss = val_loss
-            self.best_model = copy.deepcopy(model.state_dict())
-        elif self.best_loss - val_loss >= self.min_delta:
-            self.best_model = copy.deepcopy(model.state_dict())
-            self.best_loss = val_loss
-            self.counter = 0
-            self.status = f"Improvement found, counter reset to {self.counter}"
+        self.best_loss  = None
+        self.best_state = None
+        self.counter    = 0
+
+    def __call__(self, model, val_loss) -> bool:
+        """
+        Returns True  ➜  stop training.
+        Returns False ➜  continue.
+        """
+        if self.best_loss is None or self.best_loss - val_loss >= self.min_delta:
+            # improvement
+            self.best_loss  = val_loss
+            self.best_state = copy.deepcopy(model.state_dict())
+            self.counter    = 0
         else:
+            # no improvement
             self.counter += 1
-            self.status = f"No improvement in the last {self.counter} epochs"
             if self.counter >= self.patience:
-                self.status = f"Early stopping triggered after {self.counter} epochs."
-                if self.restore_best_weights:
-                    model.load_state_dict(self.best_model)
+                if self.restore:
+                    model.load_state_dict(self.best_state)
                 return True
         return False
 
 class BANDNN(nn.Module):
+    """
+    Each intra‑molecular interaction type (bond / angle / non‑bond / dihedral)
+    is mapped → (N_i, F) → (N_i, 1).  Summing over rows gives the energy
+    contribution from that interaction.  The total molecular energy is the sum
+    of the four contributions.
+    """
 
-    def __init__(self, bonds_input_dim, angles_input_dim, nonbonds_input_dim, dihedral_input_dim):
+    def __init__(
+        self,
+        bonds_in_dim: int,
+        angles_in_dim: int,
+        nonbonds_in_dim: int,
+        dihedrals_in_dim: int,
+        hidden: int = 128,
+    ):
         super().__init__()
-        self.bonds_model = nn.Sequential(
-            nn.Linear(bonds_input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1)
-        )
 
-        self.angles_model = nn.Sequential(
-            nn.Linear(angles_input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 350),
-            nn.ReLU(),
-            nn.Linear(350, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1)
-        )
+        def mlp(in_dim: int) -> nn.Sequential:
+            return nn.Sequential(
+                nn.Linear(in_dim, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, hidden * 2),
+                nn.ReLU(),
+                nn.Linear(hidden * 2, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, 1),          # ⇒ scalar per row
+            )
 
-        self.nonbonds_model = nn.Sequential(
-            nn.Linear(nonbonds_input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1)
-        )
+        self.bonds_model     = mlp(bonds_in_dim)
+        self.angles_model    = mlp(angles_in_dim)
+        self.nonbonds_model  = mlp(nonbonds_in_dim)
+        self.dihedrals_model = mlp(dihedrals_in_dim)
 
-        self.dihedrals_model = nn.Sequential(
-            nn.Linear(dihedral_input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 512),
-            nn.ReLU(),
-            nn.Linear(512, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1)
-        )
+    def _energy_per_type(self, mat: torch.Tensor, net: nn.Module) -> torch.Tensor:
+        """
+        mat : (N_i, F)  for one molecule & one interaction type
+        returns a 0‑D tensor (scalar)
+        """
+        return net(mat).sum()          # ∑ over rows → scalar
 
-    def forward(self, bonds_input, angles_input, non_bonds_input, dihedrals_input):
-        bonds_energy = self.bonds_model(bonds_input).sum()
-        angles_energy = self.angles_model(angles_input).sum()
-        nonbonds_energy = self.nonbonds_model(non_bonds_input).sum()
-        dihedrals_energy = self.dihedrals_model(dihedrals_input).sum()
+    def forward(
+        self,
+        bonds_batch:     List[torch.Tensor],
+        angles_batch:    List[torch.Tensor],
+        nonbonds_batch:  List[torch.Tensor],
+        dihedrals_batch: List[torch.Tensor],
+    ) -> torch.Tensor:
+        """
+        All four *_batch arguments are lists of length B, where element i is a
+        (N_i, F) tensor.  Returns a tensor of shape (B, 1).
+        """
+        energies = []
+        for bonds, angles, nonbonds, dihedrals in zip(
+            bonds_batch, angles_batch, nonbonds_batch, dihedrals_batch
+        ):
+            e_total = (
+                self._energy_per_type(bonds,     self.bonds_model)     +
+                self._energy_per_type(angles,    self.angles_model)    +
+                self._energy_per_type(nonbonds,  self.nonbonds_model)  +
+                self._energy_per_type(dihedrals, self.dihedrals_model)
+            )
+            energies.append(e_total)
 
-        total_energy = bonds_energy + angles_energy + nonbonds_energy + dihedrals_energy
-        return total_energy
+        # list of 0‑D tensors → (B, 1)
+        return torch.stack(energies).unsqueeze(1)
+
 
 # from torchinfo import summary
 model = BANDNN(BONDS_DIM, ANGLES_DIM, NONBONDS_DIM, DIHEDRALS_DIM)
@@ -152,116 +187,75 @@ model = model.to(device)
 # model.summary()
 # summary(model)
 
-epochs = 9
+@torch.no_grad()
+def eval_epoch(model, loader, criterion, device):
+    model.eval()
+    total, items = 0.0, 0
+    for feats, targets in loader:
+        batch_bonds     = [torch.as_tensor(d["bonds"]).to(device)     for d in feats]
+        batch_angles    = [torch.as_tensor(d["angles"]).to(device)    for d in feats]
+        batch_nonbonds  = [torch.as_tensor(d["nonbonds"]).to(device)  for d in feats]
+        batch_dihedrals = [torch.as_tensor(d["dihedrals"]).to(device) for d in feats]
+
+        y_true = torch.as_tensor(targets, dtype=torch.float32, device=device).view(-1, 1)
+        y_pred = model(batch_bonds, batch_angles, batch_nonbonds, batch_dihedrals)
+
+        loss   = criterion(y_pred, y_true)
+        bs     = y_true.size(0)
+        total += loss.item() * bs
+        items += bs
+    return total / items
+
+
+model     = BANDNN(BONDS_DIM, ANGLES_DIM, NONBONDS_DIM, DIHEDRALS_DIM).to(device)
+criterion = torch.nn.MSELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+early_stop = EarlyStopping(patience=7, min_delta=0.0001)
+
+epochs = 1000
 learning_rate = 0.01
 
-# loss func
-criterion = nn.MSELoss()
+for epoch in range(1, epochs + 1):
+    # ─── training ────────────────────────────────────────────────────────────
+    model.train()
+    train_loss_sum, train_items = 0.0, 0
 
-# optimizer
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    for feats, targets in tqdm(train_loader, desc=f"Epoch {epoch} [train]"):
+      
+        batch_bonds     = [torch.as_tensor(d["bonds"]).to(device)     for d in feats]
+        batch_angles    = [torch.as_tensor(d["angles"]).to(device)    for d in feats]
+        batch_nonbonds  = [torch.as_tensor(d["nonbonds"]).to(device)  for d in feats]
+        batch_dihedrals = [torch.as_tensor(d["dihedrals"]).to(device) for d in feats]
 
-check_point_epochs = [i*100 for i in range(1, 20)]
-done = False
-es = EarlyStopping()
+        y_true = torch.as_tensor(targets, dtype=torch.float32, device=device).view(-1, 1)
+
+        optimizer.zero_grad()
+        y_pred = model(batch_bonds, batch_angles, batch_nonbonds, batch_dihedrals)
+        loss   = criterion(y_pred, y_true)
+        loss.backward()
+        optimizer.step()
+
+        bs              = y_true.size(0)
+        train_loss_sum += loss.item() * bs
+        train_items    += bs
+
+    train_loss = train_loss_sum / train_items
+
+    # ─── validation ─────────────────────────────────────────────────────────
+    val_loss = eval_epoch(model, valid_loader, criterion, device)
+
+    print(f"Epoch {epoch:3d} | train = {train_loss:.4f} | val = {val_loss:.4f}")
+
+    # ─── early stopping check ───────────────────────────────────────────────
+    if early_stop(model, val_loss):
+        print(f">>> Early‑stopping triggered (val loss = {early_stop.best_loss:.4f}) <<<")
+        break
+
+# model already contains the best weights (restored by EarlyStopping)
+torch.save(model.state_dict(), "BANDNN-best.pth")
 
 
-def evaluate_model(model, test_loader, device='cuda'):
-    model.eval()  # Set model to eval mode
-    total_loss = 0
-    total_samples = 0
-
-    predictions = []
-    targets_list = []
-
-    criterion = torch.nn.MSELoss()
-
-    with torch.no_grad():  # No gradients needed
-        for batch in test_loader:
-            features_list, targets = batch
-
-            for feature, target in zip(features_list, targets):
-                # Convert and move feature components to device
-                bonds = torch.stack([torch.tensor(b, dtype=torch.float32) for b in feature['bonds']]).to(device)
-                angles = torch.stack([torch.tensor(a, dtype=torch.float32) for a in feature['angles']]).to(device)
-                nonbonds = torch.stack([torch.tensor(n, dtype=torch.float32) for n in feature['nonbonds']]).to(device)
-                dihedrals = torch.stack([torch.tensor(d, dtype=torch.float32) for d in feature['dihedrals']]).to(device)
-
-                target = torch.tensor(target, dtype=torch.float32).to(device)
-
-                # Get model output
-                output = model(bonds, angles, nonbonds, dihedrals)
-
-                # Compute loss
-                loss = criterion(output, target)
-                total_loss += loss.item()
-                total_samples += 1
-
-                predictions.append(output.item())
-                targets_list.append(target.item())
-
-    avg_loss = total_loss / total_samples
-
-    print(f"Evaluation MSE Loss: {avg_loss:.4f}")
-    print(f"Evaluation R2 Score: {r2_score(targets_list, predictions):.4f}")
-    return predictions, targets_list, avg_loss
-
-done = False
-epoch = 0
-
-while epoch < 1000 and not done:
-    epoch += 1
-    total_epoch_loss = 0.0
-    num_samples = 0
-    steps = list(enumerate(train_loader))
-    pbar = tqdm(steps)
-
-    for i, batch in pbar:
-        feature_dict_list, target_list = batch
-
-        for feature_dict, target in zip(feature_dict_list, target_list):
-            bond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['bonds']]).to(device)
-            angle_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['angles']]).to(device)
-            nonbond_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['nonbonds']]).to(device)
-            dihedral_feat = torch.stack([torch.tensor(arr, dtype=torch.float32) for arr in feature_dict['dihedrals']]).to(device)
-            energy_feat = torch.tensor([target], dtype=torch.float32).to(device)
-
-            optimizer.zero_grad()
-            outputs = model(bond_feat, angle_feat, nonbond_feat, dihedral_feat)
-            loss = criterion(outputs, energy_feat)
-            loss.backward()
-            optimizer.step()
-
-            loss_val = loss.item()
-            total_epoch_loss += loss_val
-            num_samples += 1
-
-            pbar.set_description(f"Epoch: {epoch}, Batch Loss: {loss_val:.4f}")
-
-    avg_train_loss = total_epoch_loss / num_samples
-
-    # Validation after each epoch
-    model.eval()
-    predictions, targets_list, avg_val_loss = evaluate_model(model=model, test_loader=test_loader)
-
-    if es(model, avg_val_loss):
-        done = True
-
-    pbar.set_description(
-        f"Epoch: {epoch}, Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, EStop: [{es.status}]"
-    )
-
-    # Save checkpoint if needed
-    if epoch in check_point_epochs:
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': avg_train_loss,
-        }, f'/home2/prathit.chatterjee/Adithya/BANDNN-checkpoint_epoch_{epoch}.pth')
-  
-
-torch.save(model.state_dict(), '/home2/prathit.chatterjee/Adithya/BANDNN-weights-260425-1.pth')
 
 
 model.eval()
