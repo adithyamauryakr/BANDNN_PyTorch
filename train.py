@@ -44,7 +44,17 @@ class CustomDataset(Dataset):
     return self.features[index], self.targets[index]
   
 
-def collate_Fn(batch):
+def collate_fn(batch):
+    """
+    Custom collate function to handle variable-length feature dicts per sample.
+
+    Args:
+        batch (list): List of tuples (feature_dict, target)
+
+    Returns:
+        feature_batch (list of dicts): List of feature dictionaries, length=batch_size
+        target_batch (Tensor): FloatTensor of shape (batch_size,)
+    """
     feature_batch, target_batch = zip(*batch)
     return list(feature_batch), torch.tensor(target_batch, dtype=torch.float32)
 
@@ -69,9 +79,9 @@ train_dataset, val_dataset, test_dataset = random_split(
 # Dataloaders
 batch_size = 32
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=False)
-val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False)
-test_loader  = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=True, drop_last=False)
+val_loader   = DataLoader(val_dataset,   batch_size=batch_size,collate_fn=collate_fn, shuffle=False)
+test_loader  = DataLoader(test_dataset,  batch_size=batch_size,collate_fn=collate_fn, shuffle=False)
 
 BONDS_DIM, ANGLES_DIM, NONBONDS_DIM, DIHEDRALS_DIM = 17, 27, 17, 38
 
@@ -223,10 +233,10 @@ for epoch in range(1, epochs + 1):
 
     for feats, targets in tqdm(train_loader, desc=f"Epoch {epoch} [train]"):
       
-        batch_bonds     = [torch.as_tensor(d["bonds"]).to(device)     for d in feats]
-        batch_angles    = [torch.as_tensor(d["angles"]).to(device)    for d in feats]
-        batch_nonbonds  = [torch.as_tensor(d["nonbonds"]).to(device)  for d in feats]
-        batch_dihedrals = [torch.as_tensor(d["dihedrals"]).to(device) for d in feats]
+        batch_bonds     = [torch.tensor(d["bonds"], dtype=torch.float32).to(device)     for d in feats]
+        batch_angles    = [torch.tensor(d["angles"], dtype=torch.float32).to(device)    for d in feats]
+        batch_nonbonds  = [torch.tensor(d["nonbonds"], dtype=torch.float32).to(device)  for d in feats]
+        batch_dihedrals = [torch.tensor(d["dihedrals"], dtype=torch.float32).to(device) for d in feats]
 
         y_true = torch.as_tensor(targets, dtype=torch.float32, device=device).view(-1, 1)
 
@@ -243,14 +253,15 @@ for epoch in range(1, epochs + 1):
     train_loss = train_loss_sum / train_items
 
     # ─── validation ─────────────────────────────────────────────────────────
-    val_loss = eval_epoch(model, val_loader, criterion, device)
+    val_loss = eval_epoch(model, valid_loader, criterion, device)
 
     print(f"Epoch {epoch:3d} | train = {train_loss:.4f} | val = {val_loss:.4f}")
 
     # ─── early stopping check ───────────────────────────────────────────────
     if early_stop(model, val_loss):
-        print(f">>> Early-stopping triggered (val-loss = {early_stop.best_loss:.4f}) <<<")
+        print(f">>> Early‑stopping triggered (val loss = {early_stop.best_loss:.4f}) <<<")
         break
+
 
 # model already contains the best weights (restored by EarlyStopping)
 torch.save(model.state_dict(), "/home2/prathit.chatterjee/Adithya/BANDNN-best.pth")
