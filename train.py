@@ -243,33 +243,77 @@ for epoch in range(1, epochs + 1):
     train_loss = train_loss_sum / train_items
 
     # ─── validation ─────────────────────────────────────────────────────────
-    val_loss = eval_epoch(model, valid_loader, criterion, device)
+    val_loss = eval_epoch(model, val_loader, criterion, device)
 
     print(f"Epoch {epoch:3d} | train = {train_loss:.4f} | val = {val_loss:.4f}")
 
     # ─── early stopping check ───────────────────────────────────────────────
     if early_stop(model, val_loss):
-        print(f">>> Early‑stopping triggered (val loss = {early_stop.best_loss:.4f}) <<<")
+        print(f">>> Early-stopping triggered (val-loss = {early_stop.best_loss:.4f}) <<<")
         break
 
 # model already contains the best weights (restored by EarlyStopping)
-torch.save(model.state_dict(), "BANDNN-best.pth")
+torch.save(model.state_dict(), "/home2/prathit.chatterjee/Adithya/BANDNN-best.pth")
 
 
+import torch
+import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
+def evaluate_model(model, data_loader, device):
+    model.eval()
+    all_preds = []
+    all_targets = []
+    total_loss = 0.0
+    criterion = torch.nn.MSELoss()
 
-model.eval()
+    with torch.no_grad():
+        for batch in data_loader:
+            feature_dicts, targets = batch
 
-from sklearn.metrics import r2_score
+            # Convert each feature set to a list of tensors and send to device
+            bond_feat_list     = [torch.tensor(d["bonds"], dtype=torch.float32).to(device) for d in feature_dicts]
+            angle_feat_list    = [torch.tensor(d["angles"], dtype=torch.float32).to(device) for d in feature_dicts]
+            nonbond_feat_list  = [torch.tensor(d["nonbonds"], dtype=torch.float32).to(device) for d in feature_dicts]
+            dihedral_feat_list = [torch.tensor(d["dihedrals"], dtype=torch.float32).to(device) for d in feature_dicts]
 
+            targets = torch.tensor(targets, dtype=torch.float32).view(-1, 1).to(device)
+
+            # Predict
+            preds = model(bond_feat_list, angle_feat_list, nonbond_feat_list, dihedral_feat_list)
+            loss = criterion(preds, targets)
+
+            total_loss += loss.item() * len(targets)
+
+            all_preds.append(preds.cpu())
+            all_targets.append(targets.cpu())
+
+    # Concatenate all predictions and true values
+    all_preds = torch.cat(all_preds).squeeze().numpy()
+    all_targets = torch.cat(all_targets).squeeze().numpy()
+    avg_loss = total_loss / len(data_loader.dataset)
+
+    return all_preds, all_targets, avg_loss
+
+# Evaluate on test set
 model.to(device)
 preds, true_vals, test_loss = evaluate_model(model, test_loader, device)
 
-import matplotlib.pyplot as plt
+# Metrics
+r2 = r2_score(true_vals, preds)
+mae = mean_absolute_error(true_vals, preds)
+rmse = mean_squared_error(true_vals, preds, squared=False)
 
-plt.scatter(true_vals, preds)
+print(f"Test Loss: {test_loss:.4f} | R²: {r2:.4f} | MAE: {mae:.4f} | RMSE: {rmse:.4f}")
+
+# Plot
+plt.figure(figsize=(6, 6))
+plt.scatter(true_vals, preds, alpha=0.6, color="teal", edgecolors="k")
+plt.plot([min(true_vals), max(true_vals)], [min(true_vals), max(true_vals)], color="red", linestyle="--")
 plt.xlabel("DFT Energy")
 plt.ylabel("Predicted Energy")
 plt.title("BANDNN Predictions vs Ground Truth")
-plt.savefig('/home2/prathit.chatterjee/Adithya/parityplot.png')
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('/home2/prathit.chatterjee/Adithya/parityplot.png', dpi=300)
 plt.show()
