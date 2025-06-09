@@ -253,7 +253,7 @@ for epoch in range(1, epochs + 1):
     train_loss = train_loss_sum / train_items
 
     # ─── validation ─────────────────────────────────────────────────────────
-    val_loss = eval_epoch(model, valid_loader, criterion, device)
+    val_loss = eval_epoch(model, val_loader, criterion, device)
 
     print(f"Epoch {epoch:3d} | train = {train_loss:.4f} | val = {val_loss:.4f}")
 
