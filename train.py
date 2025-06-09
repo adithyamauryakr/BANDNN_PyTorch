@@ -202,10 +202,10 @@ def eval_epoch(model, loader, criterion, device):
     model.eval()
     total, items = 0.0, 0
     for feats, targets in loader:
-        batch_bonds     = [torch.as_tensor(d["bonds"]).to(device)     for d in feats]
-        batch_angles    = [torch.as_tensor(d["angles"]).to(device)    for d in feats]
-        batch_nonbonds  = [torch.as_tensor(d["nonbonds"]).to(device)  for d in feats]
-        batch_dihedrals = [torch.as_tensor(d["dihedrals"]).to(device) for d in feats]
+        batch_bonds     = [torch.tensor(d["bonds"], dtype=torch.float32).to(device)     for d in feats]
+        batch_angles    = [torch.tensor(d["angles"], dtype=torch.float32).to(device)    for d in feats]
+        batch_nonbonds  = [torch.tensor(d["nonbonds"], dtype=torch.float32).to(device)  for d in feats]
+        batch_dihedrals = [torch.tensor(d["dihedrals"], dtype=torch.float32).to(device) for d in feats]
 
         y_true = torch.as_tensor(targets, dtype=torch.float32, device=device).view(-1, 1)
         y_pred = model(batch_bonds, batch_angles, batch_nonbonds, batch_dihedrals)
