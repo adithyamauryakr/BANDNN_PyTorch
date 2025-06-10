@@ -93,35 +93,35 @@ import copy
 from tqdm import tqdm
 import torch
 
-# # --- Early‑stopping utility (your class, unchanged) ---------------------------
-# class EarlyStopping:
-#     def __init__(self, patience=5, min_delta=0.0, restore_best_weights=True):
-#         self.patience   = patience
-#         self.min_delta  = min_delta
-#         self.restore    = restore_best_weights
+# --- Early‑stopping utility (your class, unchanged) ---------------------------
+class EarlyStopping:
+    def __init__(self, patience=5, min_delta=0.0, restore_best_weights=True):
+        self.patience   = patience
+        self.min_delta  = min_delta
+        self.restore    = restore_best_weights
 
-#         self.best_loss  = None
-#         self.best_state = None
-#         self.counter    = 0
+        self.best_loss  = None
+        self.best_state = None
+        self.counter    = 0
 
-#     def __call__(self, model, val_loss) -> bool:
-#         """
-#         Returns True  ➜  stop training.
-#         Returns False ➜  continue.
-#         """
-#         if self.best_loss is None or self.best_loss - val_loss >= self.min_delta:
-#             # improvement
-#             self.best_loss  = val_loss
-#             self.best_state = copy.deepcopy(model.state_dict())
-#             self.counter    = 0
-#         else:
-#             # no improvement
-#             self.counter += 1
-#             if self.counter >= self.patience:
-#                 if self.restore:
-#                     model.load_state_dict(self.best_state)
-#                 return True
-#         return False
+    def __call__(self, model, val_loss) -> bool:
+        """
+        Returns True  ➜  stop training.
+        Returns False ➜  continue.
+        """
+        if self.best_loss is None or self.best_loss - val_loss >= self.min_delta:
+            # improvement
+            self.best_loss  = val_loss
+            self.best_state = copy.deepcopy(model.state_dict())
+            self.counter    = 0
+        else:
+            # no improvement
+            self.counter += 1
+            if self.counter >= self.patience:
+                if self.restore:
+                    model.load_state_dict(self.best_state)
+                return True
+        return False
 
 class BANDNN(nn.Module):
     """
@@ -220,54 +220,47 @@ def eval_epoch(model, loader, criterion, device):
 model     = BANDNN(BONDS_DIM, ANGLES_DIM, NONBONDS_DIM, DIHEDRALS_DIM).to(device)
 criterion = torch.nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-check_point_epochs = [i*100 for i in range(10)]
-# early_stop = EarlyStopping(patience=30, min_delta=0.0001)
+
+early_stop = EarlyStopping(patience=30, min_delta=0.0001)
 
 epochs = 1000
 learning_rate = 0.01
-from tqdm import tqdm
 
-def to_tensor(arr):   # small helper
-    return torch.as_tensor(arr, dtype=torch.float32)
-
-model     = BANDNN(BONDS_DIM, ANGLES_DIM, NONBONDS_DIM, DIHEDRALS_DIM).to(device)
-criterion = torch.nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
-for epoch in range(epochs):
+for epoch in range(1, epochs + 1):
+    # ─── training ────────────────────────────────────────────────────────────
     model.train()
-    epoch_loss, n_items = 0.0, 0
+    train_loss_sum, train_items = 0.0, 0
 
-    for feat_dicts, targets in tqdm(train_loader, desc=f"Epoch {epoch+1}"):
-        # ─── convert Python lists/ndarrays → torch tensors on the correct device ───
-        batch_bonds     = [to_tensor(d["bonds"]).to(device)     for d in feat_dicts]
-        batch_angles    = [to_tensor(d["angles"]).to(device)    for d in feat_dicts]
-        batch_nonbonds  = [to_tensor(d["nonbonds"]).to(device)  for d in feat_dicts]
-        batch_dihedrals = [to_tensor(d["dihedrals"]).to(device) for d in feat_dicts]
+    for feats, targets in tqdm(train_loader, desc=f"Epoch {epoch} [train]"):
+      
+        batch_bonds     = [torch.tensor(d["bonds"], dtype=torch.float32).to(device)     for d in feats]
+        batch_angles    = [torch.tensor(d["angles"], dtype=torch.float32).to(device)    for d in feats]
+        batch_nonbonds  = [torch.tensor(d["nonbonds"], dtype=torch.float32).to(device)  for d in feats]
+        batch_dihedrals = [torch.tensor(d["dihedrals"], dtype=torch.float32).to(device) for d in feats]
 
         y_true = torch.as_tensor(targets, dtype=torch.float32, device=device).view(-1, 1)
 
-        # ─── forward / backward ───
         optimizer.zero_grad()
         y_pred = model(batch_bonds, batch_angles, batch_nonbonds, batch_dihedrals)
         loss   = criterion(y_pred, y_true)
-
         loss.backward()
         optimizer.step()
 
-        # ─── bookkeeping ───
-        bs            = y_true.size(0)
-        epoch_loss   += loss.item() * bs
-        n_items      += bs
+        bs              = y_true.size(0)
+        train_loss_sum += loss.item() * bs
+        train_items    += bs
 
-    print(f"Epoch {epoch+1:3d} | mean loss = {epoch_loss / n_items:.4f}")
-    if epoch in check_point_epochs:
-        torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'loss':  epoch_loss / n_items,
-                    }, f'BANDNN-bestmodel.pth')
+    train_loss = train_loss_sum / train_items
+
+    # ─── validation ─────────────────────────────────────────────────────────
+    val_loss = eval_epoch(model, val_loader, criterion, device)
+
+    print(f"Epoch {epoch:3d} | train = {train_loss:.4f} | val = {val_loss:.4f}")
+
+    # ─── early stopping check ───────────────────────────────────────────────
+    if early_stop(model, val_loss):
+        print(f">>> Early‑stopping triggered (val loss = {early_stop.best_loss:.4f}) <<<")
+        break
 
 
 # model already contains the best weights (restored by EarlyStopping)
